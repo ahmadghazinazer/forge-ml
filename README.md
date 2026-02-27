@@ -6,11 +6,12 @@ End-to-end platform for LLM post-training. Handles dataset versioning, training 
 
 Fine-tuning and post-training large language models is operationally complex. Teams deal with distributed training failures, dataset version confusion, no clear model promotion path, and fragile evaluation setups. forge-ml packages all of this into a single platform:
 
-- **Dataset versioning and lineage** -- track every dataset version, its provenance, licensing metadata, and PII scan status.
-- **Training orchestration** -- launch LoRA SFT, DPO, or RLHF runs from reproducible recipe configs. Built-in failure detection and auto-retry.
-- **Model registry with promotion gates** -- register trained models, enforce eval-score thresholds before promoting to production.
-- **Evaluation engine** -- run offline benchmark suites (accuracy, toxicity, coherence, etc.) with regression detection against baselines.
-- **Cluster management** -- monitor GPU node health, utilization, and estimate training costs.
+- **Dataset versioning and lineage** -- track every dataset version, its provenance, licensing metadata, and PII scan status. View the full lineage chain from derived datasets back to the original source.
+- **Training orchestration** -- launch LoRA SFT, DPO, or RLHF runs from reproducible recipe configs. Built-in failure detection and auto-retry with configurable retry limits.
+- **Model registry with promotion gates** -- register trained models, enforce eval-score thresholds before promoting through staging, candidate, and production stages.
+- **Evaluation engine** -- run offline benchmark suites (accuracy, toxicity, coherence, bias, jailbreak resistance, etc.) with regression detection against baselines. Switch between bar chart and radar chart views.
+- **Cluster management** -- monitor GPU node health and utilization in real time, track failure counts, estimate training costs, and auto-redistribute workloads when nodes go offline.
+- **Pipeline visualization** -- see the full 7-step post-training pipeline from data ingestion through deployment, with recipe details and eval suite breakdowns.
 - **Python SDK** -- programmatic access to the full API for scripting and CI/CD integration.
 
 ## Architecture
@@ -47,6 +48,88 @@ Fine-tuning and post-training large language models is operationally complex. Te
        |   SQLite DB   |
        +---------------+
 ```
+
+## How to Run
+
+### Prerequisites
+
+- Python 3.10+ (3.13 recommended; 3.14 may require building pydantic-core from source)
+- Node.js 18+
+- pip or uv
+
+### Backend
+
+```bash
+cd backend
+
+# create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# install dependencies
+pip install -r requirements.txt
+
+# start the server (runs on port 8000)
+python main.py
+```
+
+The API will be available at `http://localhost:8000`.
+Interactive docs (Swagger) at `http://localhost:8000/docs`.
+
+### Frontend
+
+```bash
+cd frontend
+
+# install dependencies
+npm install
+
+# start dev server (runs on port 5173)
+npm run dev
+```
+
+Dashboard at `http://localhost:5173`.
+
+### Seed Demo Data
+
+To populate the database with sample datasets and training runs:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -c "
+from core.db import init_db
+from core.schemas import DatasetRegister, RunLaunch, RecipeType
+from services.dataset_service import register_dataset
+from services.training_service import launch_run
+
+init_db()
+ds = register_dataset(DatasetRegister(name='alpaca-cleaned', version='2.1.0', source_path='s3://datasets/alpaca', format='jsonl', license='Apache-2.0', pii_checked=True, tags=['sft', 'instruction'], row_count=51760))
+launch_run(RunLaunch(name='alpaca-lora-7b', base_model='meta-llama/Llama-2-7b-hf', dataset_id=ds.id, recipe=RecipeType.LORA_SFT, num_gpus=4))
+print('Seeded.')
+"
+```
+
+### Production Build
+
+```bash
+cd frontend
+npm run build
+# output in frontend/dist/
+```
+
+## Dashboard Pages
+
+| Page | What It Shows |
+|------|---------------|
+| **Dashboard** | Metric cards, activity feed, cluster health preview, recent runs table (auto-refreshes) |
+| **Pipeline** | 7-step training pipeline visualization, recipe details, evaluation suite breakdown |
+| **Datasets** | Dataset list with search, version tags, PII status, lineage viewer, row count stats |
+| **Training Runs** | Run table with filters, clickable row inspection, tabbed charts (loss, LR, GPU memory, throughput) |
+| **Model Registry** | Model cards with promotion status, filter by stage, version and recipe tags |
+| **Evaluations** | Eval results with bar/radar chart toggle, benchmark scores, pass/fail details per metric |
+| **Cluster** | Node health cards with GPU/memory utilization bars, cost estimator, auto-refresh |
+| **Settings** | API config, training defaults, cluster reliability settings, env variable reference |
 
 ## API Endpoints
 
@@ -85,37 +168,7 @@ Alignment training via TRL's DPOTrainer. Requires paired preference data (chosen
 ### RLHF (Reinforcement Learning from Human Feedback)
 PPO-based training loop with optional reward model. Uses TRL's PPOTrainer.
 
-## Quickstart
-
-### Backend
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Dashboard at `http://localhost:5173`.
-
-### Seed Demo Data
-
-```bash
-python scripts/seed_data.py
-```
-
-### Python SDK
+## Python SDK
 
 ```python
 from sdk.client import ForgeClient
@@ -145,6 +198,8 @@ model = client.promote_model(
 )
 
 result = client.run_eval(model_id=model["id"], suite="default")
+status = client.cluster_status()
+cost = client.estimate_cost(num_gpus=4, hours=8)
 ```
 
 ## Project Structure
@@ -165,12 +220,14 @@ forge-ml/
 │   └── sdk/                 # Python client SDK
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/           # Dashboard, Datasets, Runs, Models, Evals
+│   │   ├── pages/           # 8 pages: Dashboard, Pipeline, Datasets,
+│   │   │                    #   Runs, Models, Evals, Cluster, Settings
 │   │   ├── components/      # Reusable UI components
 │   │   └── api/             # API client
-│   └── index.html
+│   └── public/
+│       └── favicon.png
 ├── scripts/
-│   └── seed_data.py         # Demo data seeder
+│   └── seed_data.py
 └── docs/
     └── architecture.md
 ```
@@ -179,8 +236,9 @@ forge-ml/
 
 - **Backend**: Python, FastAPI, Pydantic, SQLite
 - **ML**: PyTorch, HuggingFace Transformers, PEFT, TRL
-- **Frontend**: React, Vite, Recharts
+- **Frontend**: React 18, Vite, Recharts (line, area, bar, radar charts)
 - **SDK**: httpx-based Python client
+- **Design**: Custom CSS with glassmorphism, Inter + JetBrains Mono fonts
 
 ## License
 

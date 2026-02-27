@@ -2,84 +2,103 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
+import MetricCard from '../components/MetricCard';
 
 export default function Models() {
-    const [models, setModels] = useState([]);
-    const [total, setTotal] = useState(0);
-    const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState('');
+    let [models, setModels] = useState([]);
+    let [total, setTotal] = useState(0);
+    let [filter, setFilter] = useState('');
+    let [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        loadModels();
-    }, [filter]);
+    useEffect(() => { loadModels(); }, [filter]);
 
     async function loadModels() {
         setLoading(true);
         try {
-            const params = { page_size: 50 };
+            let params = { page_size: 50 };
             if (filter) params.status = filter;
-            const resp = await api.models.list(params);
+            let resp = await api.models.list(params);
             setModels(resp.items || []);
             setTotal(resp.total || 0);
         } catch (err) {
-            console.error('Failed to load models:', err);
+            console.error('models load error:', err);
         } finally {
             setLoading(false);
         }
     }
 
-    const statusOptions = ['', 'staging', 'candidate', 'production', 'archived'];
+    let statuses = ['', 'staging', 'candidate', 'production', 'archived'];
+
+    let stagingCount = models.filter(m => m.status === 'staging').length;
+    let prodCount = models.filter(m => m.status === 'production').length;
 
     return (
         <div>
             <div className="page-header">
                 <h2>Model Registry</h2>
-                <p>{total} model{total !== 1 ? 's' : ''} registered</p>
+                <p className="subtitle">
+                    {total} model{total !== 1 ? 's' : ''} registered across promotion stages
+                </p>
             </div>
 
-            <div style={{ marginBottom: 20, display: 'flex', gap: 6 }}>
-                {statusOptions.map((s) => (
-                    <button
-                        key={s}
-                        className={`btn ${filter === s ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setFilter(s)}
-                        style={{ fontSize: 12, padding: '6px 12px' }}
-                    >
+            <div className="metric-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+                <MetricCard label="Total Models" value={total} color="var(--blue)" />
+                <MetricCard label="Staging" value={stagingCount} color="var(--amber)" />
+                <MetricCard label="Production" value={prodCount} color="var(--green)" />
+                <MetricCard label="Recipes Used" value={[...new Set(models.map(m => m.recipe))].length || 0} color="var(--purple)" />
+            </div>
+
+            <div className="filter-bar">
+                {statuses.map(s => (
+                    <button key={s} className={`btn btn-ghost btn-sm ${filter === s ? 'active' : ''}`} onClick={() => setFilter(s)}>
                         {s || 'All'}
                     </button>
                 ))}
             </div>
 
             {loading ? (
-                <p style={{ color: 'var(--text-muted)' }}>Loading...</p>
+                <div className="loading-bar" style={{ maxWidth: 400, margin: '30px 0' }} />
             ) : models.length === 0 ? (
                 <div className="empty-state">
-                    <h3>No models yet</h3>
-                    <p>Promote a completed run to add a model to the registry.</p>
+                    <h3>No models in registry</h3>
+                    <p>Complete a training run and promote it to register a model.</p>
                 </div>
             ) : (
                 <div className="node-grid">
-                    {models.map((m) => (
+                    {models.map(m => (
                         <div className="node-card" key={m.id}>
                             <div className="node-header">
                                 <span className="node-id">{m.name}</span>
                                 <span className={`badge ${m.status}`}>{m.status}</span>
                             </div>
-                            <div style={{ marginBottom: 8 }}>
-                                <span className="tag">v{m.version}</span>
-                                <span className="tag">{m.recipe}</span>
+
+                            <div style={{ marginBottom: 12 }}>
+                                <span className="tag version">v{m.version}</span>
+                                <span className="tag recipe">{m.recipe}</span>
                             </div>
-                            <div className="detail-item" style={{ background: 'transparent', border: 'none', padding: 0 }}>
-                                <div className="dl">Base Model</div>
-                                <div className="dv" style={{ fontSize: 12 }}>{m.base_model}</div>
+
+                            <div className="util-row" style={{ marginBottom: 2 }}>
+                                <span>Base Model</span>
                             </div>
+                            <div className="mono" style={{ fontSize: 11, color: 'var(--text-soft)', marginBottom: 8 }}>
+                                {m.base_model}
+                            </div>
+
                             {m.description && (
-                                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+                                <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5, marginBottom: 8 }}>
                                     {m.description}
                                 </p>
                             )}
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-                                From run: {m.run_id}
+
+                            <div style={{ borderTop: '1px solid var(--border-dim)', paddingTop: 10, marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span className="mono" style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+                                    run: {m.run_id}
+                                </span>
+                                {m.promoted_at && (
+                                    <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+                                        {new Date(m.promoted_at).toLocaleDateString()}
+                                    </span>
+                                )}
                             </div>
                         </div>
                     ))}
